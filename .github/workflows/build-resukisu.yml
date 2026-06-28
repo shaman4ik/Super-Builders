@@ -468,6 +468,37 @@ jobs:
           done
         fi
 
+    - name: Verify CP1 (configs + rejects to stdout)
+      if: always()
+      run: |
+        echo "::group::CP1 .config grep"
+        DOT_CONFIG=""
+        for c in \
+          "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/common/.config" \
+          "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/.config" \
+          "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/.config" \
+          "$KERNEL_ROOT/common/.config"; do
+          [ -f "$c" ] && DOT_CONFIG="$c" && break
+        done
+        [ -z "$DOT_CONFIG" ] && DOT_CONFIG=$(find "$KERNEL_ROOT" -name .config -path '*/common/*' -type f 2>/dev/null | head -1)
+        echo "CP1_DOT_CONFIG=$DOT_CONFIG"
+        if [ -n "$DOT_CONFIG" ]; then
+          for s in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_ZEROMOUNT; do
+            line=$(grep -E "^${s}=|^# ${s} is not set" "$DOT_CONFIG" || echo "${s}: ABSENT")
+            echo "CP1_CFG ${line}"
+          done
+        else
+          echo "CP1_CFG: no .config found"
+        fi
+        echo "::endgroup::"
+        echo "::group::CP1 rejects"
+        echo "CP1_REJ_COUNT=${REJ_COUNT:-?}"
+        find "$GITHUB_WORKSPACE/patch-rejects" -name '*.rej' 2>/dev/null | while read -r r; do
+          echo "===== CP1_REJ FILE: ${r#"$GITHUB_WORKSPACE"/patch-rejects/} ====="
+          cat "$r"
+        done
+        echo "::endgroup::"
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
