@@ -235,7 +235,29 @@ jobs:
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
+        set +e
         patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        rc=$?
+        set -e
+        # 51_ transforms the fs/namespace.c SUS_MOUNT decl block that 50_ inserted.
+        # On drifted ACK snapshots (6.1.157) that single block hunk fuzz-rejects while
+        # 51_'s usage-removal hunks apply — leaving susfs_ksu_mounts unused (-Werror).
+        # Recover ONLY that block via the helper; any other reject stays fatal.
+        UNEXPECTED=$(find . -name '*.rej' ! -path './fs/namespace.c.rej' 2>/dev/null)
+        if [ -n "$UNEXPECTED" ]; then
+          echo "::error::Unexpected 51_ reject(s):"; echo "$UNEXPECTED"
+          for r in $UNEXPECTED; do echo "----- $r -----"; cat "$r"; done
+          exit 1
+        fi
+        if [ -f fs/namespace.c.rej ]; then
+          HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-namespace-51.sh"
+          [ -f "$HELPER" ] || { echo "::error::51_ namespace.c reject but helper missing"; exit 1; }
+          echo "51_: recovering fs/namespace.c decl block via fix-susfs-namespace-51.sh"
+          bash "$HELPER" fs/namespace.c
+          rm -f fs/namespace.c.rej fs/namespace.c.orig
+        elif [ "$rc" -ne 0 ]; then
+          echo "::error::51_ patch failed (rc=$rc) with no recoverable namespace.c.rej"; exit 1
+        fi
 
     - name: Apply KSU Safety Patch
       if: inputs.add_susfs
