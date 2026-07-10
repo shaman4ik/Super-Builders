@@ -22,8 +22,13 @@ set -euo pipefail
 F="${1:?usage: fix-susfs-namespace.sh <path/to/fs/namespace.c>}"
 [ -f "$F" ] || { echo "fix-susfs-namespace: $F not found" >&2; exit 1; }
 
-if grep -q 'susfs_ksu_mounts' "$F"; then
-  echo "fix-susfs-namespace: block already present in $F — skip (idempotent)"
+# Idempotency must key on the DECLARATION, not a bare 'susfs_ksu_mounts' match:
+# 50_'s later hunks (#8/#9) add *usages* (atomic64_add/read(&susfs_ksu_mounts))
+# that apply even when Hunk#1 (this block) rejects. A loose grep would see those
+# usages and wrongly skip, leaving the extern/decl block absent → 51_ recovery
+# then can't find its anchor and the tree won't compile.
+if grep -q 'static atomic64_t susfs_ksu_mounts = ATOMIC64_INIT' "$F"; then
+  echo "fix-susfs-namespace: decl block already present in $F — skip (idempotent)"
   exit 0
 fi
 
@@ -65,6 +70,6 @@ open(p, 'w').write(src)
 print("fix-susfs-namespace: inserted susfs SUS_MOUNT block into", p)
 PY
 
-grep -q 'susfs_ksu_mounts' "$F" \
-  || { echo "fix-susfs-namespace: post-check failed — block not inserted" >&2; exit 1; }
+grep -q 'static atomic64_t susfs_ksu_mounts = ATOMIC64_INIT' "$F" \
+  || { echo "fix-susfs-namespace: post-check failed — decl block not inserted" >&2; exit 1; }
 echo "fix-susfs-namespace: OK ($F)"
