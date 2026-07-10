@@ -206,7 +206,30 @@ jobs:
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
+        set +e
         patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+        rc=$?
+        set -e
+        # The shared 50_ patch (no sublevel in its name) rejects ONLY fs/namespace.c
+        # Hunk #1 on drifted ACK snapshots (e.g. 6.1.157): the top include list moved,
+        # so fuzz-3 can't place the include+decl block. Hunks #2..#9 still apply and
+        # reference susfs_ksu_mounts/CL_COPY_MNT_NS, so the block is mandatory. Recover
+        # it with an anchor-based helper. Any OTHER reject stays fatal.
+        UNEXPECTED=$(find . -name '*.rej' ! -path './fs/namespace.c.rej' 2>/dev/null)
+        if [ -n "$UNEXPECTED" ]; then
+          echo "::error::Unexpected 50_ reject(s):"; echo "$UNEXPECTED"
+          for r in $UNEXPECTED; do echo "----- $r -----"; cat "$r"; done
+          exit 1
+        fi
+        if [ -f fs/namespace.c.rej ]; then
+          HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-namespace.sh"
+          [ -f "$HELPER" ] || { echo "::error::namespace.c reject but helper missing"; exit 1; }
+          echo "50_: recovering fs/namespace.c Hunk#1 via fix-susfs-namespace.sh"
+          bash "$HELPER" fs/namespace.c
+          rm -f fs/namespace.c.rej fs/namespace.c.orig
+        elif [ "$rc" -ne 0 ]; then
+          echo "::error::50_ patch failed (rc=$rc) with no recoverable namespace.c.rej"; exit 1
+        fi
 
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
